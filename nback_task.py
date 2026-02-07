@@ -8,6 +8,7 @@ A PsychoPy implementation for assessing working memory.
 Conditions:
 - 0-back: Respond when target letter (X) appears
 - 2-back: Respond when current letter matches 2 trials back
+- 3-back: Respond when current letter matches 3 trials back (optional)
 
 Output: CSV with trial-by-trial data + summary metrics including d-prime
 
@@ -25,34 +26,57 @@ from datetime import datetime
 # CONFIGURATION
 # ============================================================================
 
-CONFIG = {
+# Quick demo mode - set to True for short version (~5 min)
+DEMO_MODE = True
+
+CONFIG_FULL = {
     # Timing (in seconds)
-    'stimulus_duration': 0.5,      # 500ms stimulus presentation
-    'isi_duration': 2.0,           # 2000ms inter-stimulus interval
-    'feedback_duration': 0.5,      # 500ms feedback after response
+    'stimulus_duration': 0.5,
+    'isi_duration': 2.0,
     
     # Task structure
-    'n_levels': [0, 2],            # 0-back and 2-back conditions
-    'trials_per_block': 48,        # Trials per block
-    'blocks_per_level': 2,         # 2 blocks per N level = 96 trials per level
-    'target_ratio': 0.30,          # 30% targets
-    
-    # Stimuli
-    'letters': ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'K', 'M', 'N', 'P', 'R', 'S', 'T', 'U'],
-    'target_letter_0back': 'X',    # Target for 0-back condition
-    
-    # Response keys
-    'response_key': 'space',       # Key to press for target
-    'quit_key': 'escape',          # Key to quit experiment
-    
-    # Display
-    'letter_size': 0.15,           # Letter size (height units)
-    'letter_color': 'white',
-    'background_color': 'black',
+    'n_levels': [0, 2, 3],          # 0-back, 2-back, and 3-back
+    'trials_per_block': 48,
+    'blocks_per_level': 2,
+    'target_ratio': 0.30,
     
     # Practice
-    'practice_trials': 10,         # Practice trials per condition
+    'practice_trials': 10,
 }
+
+CONFIG_DEMO = {
+    # Timing (in seconds) - slightly faster for demo
+    'stimulus_duration': 0.5,
+    'isi_duration': 1.5,
+    
+    # Task structure - shorter
+    'n_levels': [2, 3],              # Skip 0-back in demo, run 2 and 3
+    'trials_per_block': 20,          # Fewer trials
+    'blocks_per_level': 1,           # Single block
+    'target_ratio': 0.30,
+    
+    # Practice
+    'practice_trials': 5,            # Shorter practice
+}
+
+# Select config based on mode
+CONFIG = CONFIG_DEMO if DEMO_MODE else CONFIG_FULL
+
+# Shared config
+CONFIG.update({
+    # Stimuli
+    'letters': ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'K', 'M', 'N', 'P', 'R', 'S', 'T', 'U'],
+    'target_letter_0back': 'X',
+    
+    # Response keys
+    'response_key': 'space',
+    'quit_key': 'escape',
+    
+    # Display
+    'letter_size': 0.15,
+    'letter_color': 'white',
+    'background_color': 'black',
+})
 
 # ============================================================================
 # HELPER FUNCTIONS
@@ -61,9 +85,6 @@ CONFIG = {
 def generate_sequence(n_trials, n_back, target_ratio, letters, target_letter_0back=None):
     """
     Generate a sequence of letters with specified target ratio.
-    
-    For 0-back: targets are the specified target letter (X)
-    For n-back: targets are letters matching n positions back
     """
     sequence = []
     is_target = []
@@ -86,66 +107,46 @@ def generate_sequence(n_trials, n_back, target_ratio, letters, target_letter_0ba
             sequence.append(random.choice(letters))
             is_target.append(False)
         
-        # Remaining items: some are targets (match n-back), some are non-targets
+        # Remaining items
         remaining = n_trials - n_back
-        target_positions = random.sample(range(n_back, n_trials), min(n_targets, remaining))
+        n_targets_actual = min(n_targets, remaining)
+        target_positions = random.sample(range(n_back, n_trials), n_targets_actual)
         
         for i in range(n_back, n_trials):
             if i in target_positions:
-                # Target: same as n positions back
                 sequence.append(sequence[i - n_back])
                 is_target.append(True)
             else:
-                # Non-target: different from n positions back
                 available = [l for l in letters if l != sequence[i - n_back]]
-                # Also avoid creating accidental lures (n-1 back matches)
                 if n_back > 1 and len(sequence) >= n_back - 1:
                     available = [l for l in available if l != sequence[i - n_back + 1]]
-                sequence.append(random.choice(available))
+                sequence.append(random.choice(available) if available else random.choice(letters))
                 is_target.append(False)
     
     return sequence, is_target
 
 
 def calculate_dprime(hits, misses, false_alarms, correct_rejections):
-    """
-    Calculate d-prime (sensitivity index).
-    
-    d' = z(hit_rate) - z(false_alarm_rate)
-    
-    Applies correction for extreme values (0 or 1).
-    """
+    """Calculate d-prime (sensitivity index) with log-linear correction."""
     from scipy import stats
     
-    # Calculate rates
     n_targets = hits + misses
     n_nontargets = false_alarms + correct_rejections
     
     if n_targets == 0 or n_nontargets == 0:
         return np.nan
     
-    hit_rate = hits / n_targets
-    fa_rate = false_alarms / n_nontargets
-    
-    # Apply Hautus (1995) log-linear correction for extreme values
-    # Adjusted rates: (hits + 0.5) / (n_targets + 1)
     hit_rate_adj = (hits + 0.5) / (n_targets + 1)
     fa_rate_adj = (false_alarms + 0.5) / (n_nontargets + 1)
     
-    # Calculate z-scores
     z_hit = stats.norm.ppf(hit_rate_adj)
     z_fa = stats.norm.ppf(fa_rate_adj)
     
-    dprime = z_hit - z_fa
-    return dprime
+    return z_hit - z_fa
 
 
 def calculate_criterion(hits, misses, false_alarms, correct_rejections):
-    """
-    Calculate response criterion (c).
-    
-    c = -0.5 * (z(hit_rate) + z(false_alarm_rate))
-    """
+    """Calculate response criterion (c)."""
     from scipy import stats
     
     n_targets = hits + misses
@@ -160,8 +161,7 @@ def calculate_criterion(hits, misses, false_alarms, correct_rejections):
     z_hit = stats.norm.ppf(hit_rate_adj)
     z_fa = stats.norm.ppf(fa_rate_adj)
     
-    criterion = -0.5 * (z_hit + z_fa)
-    return criterion
+    return -0.5 * (z_hit + z_fa)
 
 
 # ============================================================================
@@ -173,82 +173,51 @@ class NBackExperiment:
         self.participant_id = participant_id
         self.session = session
         self.data_dir = os.path.join(os.path.dirname(__file__), 'data')
-        
-        # Ensure data directory exists
         os.makedirs(self.data_dir, exist_ok=True)
         
-        # Initialize window
         self.win = visual.Window(
             fullscr=True,
             color=CONFIG['background_color'],
             units='height'
         )
         
-        # Initialize stimuli
         self.letter_stim = visual.TextStim(
-            self.win,
-            text='',
-            height=CONFIG['letter_size'],
-            color=CONFIG['letter_color'],
-            font='Arial'
+            self.win, text='', height=CONFIG['letter_size'],
+            color=CONFIG['letter_color'], font='Arial'
         )
         
         self.instruction_stim = visual.TextStim(
-            self.win,
-            text='',
-            height=0.03,
-            color='white',
-            wrapWidth=0.8
+            self.win, text='', height=0.03, color='white', wrapWidth=0.8
         )
         
         self.fixation = visual.TextStim(
-            self.win,
-            text='+',
-            height=0.05,
-            color='white'
+            self.win, text='+', height=0.05, color='white'
         )
         
-        # Data storage
         self.all_trials = []
         self.summary_data = {}
-        
-        # Clock
         self.clock = core.Clock()
     
     def show_instructions(self, n_back, is_practice=False):
         """Display instructions for the current condition."""
         practice_text = " (PRACTICE)" if is_practice else ""
+        mode_text = "[DEMO MODE - Short Version]\n\n" if DEMO_MODE else ""
         
         if n_back == 0:
-            text = f"""
-0-BACK TASK{practice_text}
-
-You will see letters appear one at a time.
+            text = f"""{mode_text}0-BACK TASK{practice_text}
 
 Press SPACE whenever you see the letter 'X'.
 
-Do NOT press for any other letter.
-
-Try to respond as quickly and accurately as possible.
-
-Press SPACE to begin.
-"""
+Press SPACE to begin."""
         else:
-            text = f"""
-{n_back}-BACK TASK{practice_text}
-
-You will see letters appear one at a time.
+            text = f"""{mode_text}{n_back}-BACK TASK{practice_text}
 
 Press SPACE when the current letter is the SAME 
 as the letter shown {n_back} trials ago.
 
-Example: If you see A...B...A, press SPACE on the second A
-(because A appeared 2 trials before).
+{"Example: A...B...C...A → press on 2nd A (matches 3 back)" if n_back == 3 else "Example: A...B...A → press on 2nd A (matches 2 back)"}
 
-Try to respond as quickly and accurately as possible.
-
-Press SPACE to begin.
-"""
+Press SPACE to begin."""
         
         self.instruction_stim.text = text
         self.instruction_stim.draw()
@@ -258,7 +227,6 @@ Press SPACE to begin.
     def run_block(self, n_back, block_num, n_trials, is_practice=False):
         """Run a single block of trials."""
         
-        # Generate sequence
         sequence, targets = generate_sequence(
             n_trials=n_trials,
             n_back=n_back,
@@ -270,7 +238,6 @@ Press SPACE to begin.
         block_data = []
         
         for trial_num, (letter, is_target) in enumerate(zip(sequence, targets)):
-            # Check for quit
             if event.getKeys(keyList=[CONFIG['quit_key']]):
                 self.save_data()
                 core.quit()
@@ -280,7 +247,6 @@ Press SPACE to begin.
             self.letter_stim.draw()
             self.win.flip()
             
-            # Collect response during stimulus + ISI
             self.clock.reset()
             response = None
             rt = None
@@ -292,7 +258,7 @@ Press SPACE to begin.
                     response = keys[0][0]
                     rt = keys[0][1]
             
-            # ISI (show fixation)
+            # ISI
             self.fixation.draw()
             self.win.flip()
             
@@ -303,23 +269,15 @@ Press SPACE to begin.
                     response = keys[0][0]
                     rt = keys[0][1]
             
-            # Determine response type
             responded = response is not None
             
             if is_target:
-                if responded:
-                    response_type = 'hit'
-                else:
-                    response_type = 'miss'
+                response_type = 'hit' if responded else 'miss'
             else:
-                if responded:
-                    response_type = 'false_alarm'
-                else:
-                    response_type = 'correct_rejection'
+                response_type = 'false_alarm' if responded else 'correct_rejection'
             
             correct = response_type in ['hit', 'correct_rejection']
             
-            # Store trial data
             trial_data = {
                 'participant_id': self.participant_id,
                 'session': self.session,
@@ -350,14 +308,7 @@ Press SPACE to begin.
         self.show_instructions(n_back, is_practice=True)
         self.run_block(n_back, block_num=0, n_trials=CONFIG['practice_trials'], is_practice=True)
         
-        # Show "practice complete" message
-        self.instruction_stim.text = """
-Practice complete!
-
-The real task will now begin.
-
-Press SPACE when ready.
-"""
+        self.instruction_stim.text = "Practice complete!\n\nPress SPACE when ready."
         self.instruction_stim.draw()
         self.win.flip()
         event.waitKeys(keyList=[CONFIG['response_key']])
@@ -367,15 +318,8 @@ Press SPACE when ready.
             self.show_instructions(n_back, is_practice=False)
             self.run_block(n_back, block_num=block, n_trials=CONFIG['trials_per_block'], is_practice=False)
             
-            # Break between blocks (except after last)
             if block < CONFIG['blocks_per_level']:
-                self.instruction_stim.text = f"""
-Block {block} of {CONFIG['blocks_per_level']} complete.
-
-Take a short break if needed.
-
-Press SPACE to continue.
-"""
+                self.instruction_stim.text = f"Block {block}/{CONFIG['blocks_per_level']} complete.\n\nPress SPACE to continue."
                 self.instruction_stim.draw()
                 self.win.flip()
                 event.waitKeys(keyList=[CONFIG['response_key']])
@@ -387,29 +331,28 @@ Press SPACE to continue.
         df = pd.DataFrame(self.all_trials)
         
         for n_back in CONFIG['n_levels']:
-            condition_data = df[(df['n_back'] == n_back) & (df['is_practice'] == False)]
+            cond = df[(df['n_back'] == n_back) & (df['is_practice'] == False)]
             
-            if len(condition_data) == 0:
+            if len(cond) == 0:
                 continue
             
-            hits = len(condition_data[condition_data['response_type'] == 'hit'])
-            misses = len(condition_data[condition_data['response_type'] == 'miss'])
-            false_alarms = len(condition_data[condition_data['response_type'] == 'false_alarm'])
-            correct_rejections = len(condition_data[condition_data['response_type'] == 'correct_rejection'])
+            hits = len(cond[cond['response_type'] == 'hit'])
+            misses = len(cond[cond['response_type'] == 'miss'])
+            fas = len(cond[cond['response_type'] == 'false_alarm'])
+            crs = len(cond[cond['response_type'] == 'correct_rejection'])
             
-            total = len(condition_data)
+            total = len(cond)
             n_targets = hits + misses
-            n_nontargets = false_alarms + correct_rejections
+            n_nontargets = fas + crs
             
-            accuracy = (hits + correct_rejections) / total if total > 0 else np.nan
+            accuracy = (hits + crs) / total if total > 0 else np.nan
             hit_rate = hits / n_targets if n_targets > 0 else np.nan
-            fa_rate = false_alarms / n_nontargets if n_nontargets > 0 else np.nan
+            fa_rate = fas / n_nontargets if n_nontargets > 0 else np.nan
             
-            dprime = calculate_dprime(hits, misses, false_alarms, correct_rejections)
-            criterion = calculate_criterion(hits, misses, false_alarms, correct_rejections)
+            dprime = calculate_dprime(hits, misses, fas, crs)
+            criterion = calculate_criterion(hits, misses, fas, crs)
             
-            # RT for hits only
-            hit_rts = condition_data[condition_data['response_type'] == 'hit']['rt'].dropna()
+            hit_rts = cond[cond['response_type'] == 'hit']['rt'].dropna()
             mean_rt = hit_rts.mean() if len(hit_rts) > 0 else np.nan
             
             self.summary_data[f'{n_back}-back'] = {
@@ -417,18 +360,16 @@ Press SPACE to continue.
                 'session': self.session,
                 'n_back': n_back,
                 'total_trials': total,
-                'n_targets': n_targets,
-                'n_nontargets': n_nontargets,
                 'hits': hits,
                 'misses': misses,
-                'false_alarms': false_alarms,
-                'correct_rejections': correct_rejections,
-                'accuracy': accuracy,
-                'hit_rate': hit_rate,
-                'false_alarm_rate': fa_rate,
-                'dprime': dprime,
-                'criterion': criterion,
-                'mean_rt_hits': mean_rt
+                'false_alarms': fas,
+                'correct_rejections': crs,
+                'accuracy': round(accuracy, 3),
+                'hit_rate': round(hit_rate, 3) if not np.isnan(hit_rate) else np.nan,
+                'false_alarm_rate': round(fa_rate, 3) if not np.isnan(fa_rate) else np.nan,
+                'dprime': round(dprime, 2) if not np.isnan(dprime) else np.nan,
+                'criterion': round(criterion, 2) if not np.isnan(criterion) else np.nan,
+                'mean_rt_hits': round(mean_rt * 1000, 0) if not np.isnan(mean_rt) else np.nan  # in ms
             }
     
     def save_data(self):
@@ -437,27 +378,18 @@ Press SPACE to continue.
         
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         
-        # Trial-by-trial data
-        trial_file = os.path.join(
-            self.data_dir, 
-            f'{self.participant_id}_session{self.session}_trials_{timestamp}.csv'
-        )
+        # Trial data
+        trial_file = os.path.join(self.data_dir, f'{self.participant_id}_s{self.session}_trials_{timestamp}.csv')
         pd.DataFrame(self.all_trials).to_csv(trial_file, index=False)
-        print(f"Trial data saved: {trial_file}")
         
-        # Summary data
+        # Summary
         self.calculate_summary()
-        summary_file = os.path.join(
-            self.data_dir,
-            f'{self.participant_id}_session{self.session}_summary_{timestamp}.csv'
-        )
-        pd.DataFrame(self.summary_data).T.to_csv(summary_file, index=False)
-        print(f"Summary data saved: {summary_file}")
-        
-        # Append to aggregated file
-        agg_file = os.path.join(self.data_dir, 'all_participants_summary.csv')
+        summary_file = os.path.join(self.data_dir, f'{self.participant_id}_s{self.session}_summary_{timestamp}.csv')
         summary_df = pd.DataFrame(self.summary_data).T
+        summary_df.to_csv(summary_file, index=False)
         
+        # Aggregated
+        agg_file = os.path.join(self.data_dir, 'all_participants_summary.csv')
         if os.path.exists(agg_file):
             existing = pd.read_csv(agg_file)
             combined = pd.concat([existing, summary_df], ignore_index=True)
@@ -465,16 +397,37 @@ Press SPACE to continue.
         else:
             summary_df.to_csv(agg_file, index=False)
         
-        print(f"Aggregated data updated: {agg_file}")
+        print(f"\nData saved to: {self.data_dir}")
+        print(f"  Trials: {trial_file}")
+        print(f"  Summary: {summary_file}")
+        print(f"  Aggregated: {agg_file}")
+        
+        # Print summary to console
+        print("\n" + "="*50)
+        print("RESULTS SUMMARY")
+        print("="*50)
+        for condition, metrics in self.summary_data.items():
+            print(f"\n{condition.upper()}:")
+            print(f"  Accuracy: {metrics['accuracy']*100:.1f}%")
+            print(f"  d-prime:  {metrics['dprime']}")
+            print(f"  Hits: {metrics['hits']}, Misses: {metrics['misses']}, FA: {metrics['false_alarms']}")
+            if not np.isnan(metrics['mean_rt_hits']):
+                print(f"  Mean RT:  {metrics['mean_rt_hits']:.0f} ms")
+        print("="*50)
         
         return summary_file
     
     def show_end_screen(self):
-        """Display end of experiment message."""
-        self.instruction_stim.text = """
-Thank you for participating!
+        """Display end of experiment message with results."""
+        results_text = "RESULTS:\n\n"
+        for condition, metrics in self.summary_data.items():
+            results_text += f"{condition}: {metrics['accuracy']*100:.0f}% accuracy, d'={metrics['dprime']}\n"
+        
+        self.instruction_stim.text = f"""
+Experiment Complete!
 
-The experiment is now complete.
+{results_text}
+Thank you for participating.
 
 Press any key to exit.
 """
@@ -485,19 +438,15 @@ Press any key to exit.
     def run(self):
         """Run the complete experiment."""
         try:
-            # Welcome screen
-            self.instruction_stim.text = """
-Welcome to the N-Back Working Memory Task
+            mode_note = "DEMO MODE (~5 min)\n\n" if DEMO_MODE else ""
+            levels_desc = ", ".join([f"{n}-back" for n in CONFIG['n_levels']])
+            
+            self.instruction_stim.text = f"""{mode_note}Welcome to the N-Back Working Memory Task
 
-In this experiment, you will see letters appear one at a time.
-Your task is to detect specific patterns depending on the condition.
+You will complete: {levels_desc}
 
-You will complete two types of tasks:
-- 0-back: Press SPACE when you see the letter 'X'
-- 2-back: Press SPACE when the current letter matches 
-          the one from 2 trials ago
-
-Each task includes a short practice before the main trials.
+Your task: Press SPACE when you detect a target.
+Each condition will be explained before it starts.
 
 Press SPACE to begin.
 """
@@ -505,14 +454,10 @@ Press SPACE to begin.
             self.win.flip()
             event.waitKeys(keyList=[CONFIG['response_key']])
             
-            # Run each condition
             for n_back in CONFIG['n_levels']:
                 self.run_condition(n_back)
             
-            # Save data
             self.save_data()
-            
-            # End screen
             self.show_end_screen()
             
         finally:
@@ -527,10 +472,10 @@ Press SPACE to begin.
 def main():
     """Main entry point."""
     
-    # Participant info dialog
     dlg = gui.Dlg(title='N-Back Task')
-    dlg.addField('Participant ID:', '')
+    dlg.addField('Participant ID:', 'test')
     dlg.addField('Session:', 1)
+    dlg.addField('Demo mode (short):', DEMO_MODE)
     
     data = dlg.show()
     
@@ -540,11 +485,24 @@ def main():
     participant_id = data[0]
     session = int(data[1])
     
+    # Update demo mode based on dialog
+    global DEMO_MODE, CONFIG
+    DEMO_MODE = data[2]
+    CONFIG = CONFIG_DEMO if DEMO_MODE else CONFIG_FULL
+    CONFIG.update({
+        'letters': ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'K', 'M', 'N', 'P', 'R', 'S', 'T', 'U'],
+        'target_letter_0back': 'X',
+        'response_key': 'space',
+        'quit_key': 'escape',
+        'letter_size': 0.15,
+        'letter_color': 'white',
+        'background_color': 'black',
+    })
+    
     if not participant_id:
-        print("Error: Participant ID is required")
+        print("Error: Participant ID required")
         core.quit()
     
-    # Run experiment
     exp = NBackExperiment(participant_id=participant_id, session=session)
     exp.run()
 

@@ -8,7 +8,15 @@ The N-back task is a standard cognitive psychology paradigm for measuring workin
 
 This implementation includes:
 - **0-back** (control): Respond when target letter 'X' appears
-- **2-back** (main measure): Respond when current letter matches 2 trials back
+- **2-back** (standard): Respond when current letter matches 2 trials back
+- **3-back** (harder): Respond when current letter matches 3 trials back
+
+### Two Modes
+
+| Mode | Duration | Trials/block | Blocks | Conditions |
+|------|----------|--------------|--------|------------|
+| **Demo** | ~5 min | 20 | 1 | 2-back, 3-back |
+| **Full** | ~20 min | 48 | 2 | 0-back, 2-back, 3-back |
 
 ## Requirements
 
@@ -42,17 +50,14 @@ A dialog will prompt for:
 
 ### Task Structure
 
-1. **Welcome screen** with overview
-2. **0-back condition**:
-   - Practice (10 trials)
-   - Block 1 (48 trials)
-   - Block 2 (48 trials)
-3. **2-back condition**:
-   - Practice (10 trials)  
-   - Block 1 (48 trials)
-   - Block 2 (48 trials)
+**Demo Mode (~5 min):**
+1. 2-back: Practice (5) + Main (20 trials)
+2. 3-back: Practice (5) + Main (20 trials)
 
-**Total duration:** ~15-20 minutes
+**Full Mode (~20 min):**
+1. 0-back: Practice (10) + 2 blocks × 48 trials
+2. 2-back: Practice (10) + 2 blocks × 48 trials
+3. 3-back: Practice (10) + 2 blocks × 48 trials
 
 ## Parameters
 
